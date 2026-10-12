@@ -35,6 +35,10 @@ textarea{width:100%;min-height:92px;margin-top:10px;padding:11px;border:1px soli
 .cab{display:flex;justify-content:space-between;align-items:baseline;margin-top:16px;padding-top:12px;border-top:1px solid #e3dbd0}
 .ay{color:var(--dim);font-size:12.5px;margin-top:14px;line-height:1.6}
 .msg{margin-top:9px;padding:9px 11px;border-radius:9px;background:var(--tile);border:1px solid var(--line);font-size:14px;min-height:20px}
+.modos{display:flex;gap:6px;margin-top:9px}
+.modos .md{flex:1;padding:11px 4px;font-size:14px;font-weight:600;background:var(--tile);color:var(--dim);border:1px solid var(--line)}
+.modos .md.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.chip i{font-style:normal;font-size:11px;letter-spacing:.06em;color:var(--dim)}
 details{margin-top:14px;border-top:1px solid #e3dbd0;padding-top:12px}
 summary{cursor:pointer;font-weight:600;font-size:14.5px;color:var(--acc);padding:4px 0}
 @media (prefers-color-scheme:dark){:root{--bg:#17150f;--fg:#f0ebe2;--dim:#a2978a;--line:#3a342c;--tile:#232019;--acc:#e08b3e;--bad:#e8604f}}
@@ -47,6 +51,14 @@ summary{cursor:pointer;font-weight:600;font-size:14.5px;color:var(--acc);padding
 <!-- El teclado va primero: hoy los barriles no tienen QR, así que el conteo de
      planta se hace escribiendo. La cámara queda lista para cuando estén rotulados. -->
 <div class="man"><input id="kman" inputmode="numeric" placeholder="escribe el número: 47" autocapitalize="characters" autocomplete="off"><button id="kadd">Agregar</button></div>
+<!-- El estado se marca una vez por zona, no por barril: se pega al que elijas y
+     se aplica a todo lo que escribas despues, hasta que lo cambies. -->
+<div class="modos">
+  <button class="md on" data-m="">Sin marcar</button>
+  <button class="md" data-m="LLENO">Lleno</button>
+  <button class="md" data-m="VACIO">Vacío</button>
+  <button class="md" data-m="SUCIO">Sucio</button>
+</div>
 <div class="msg" id="kmsg">Escribe el número de cada barril que veas.</div>
 <div class="cab"><b id="kc">0 barriles</b><span id="ku" style="color:var(--dim);font-size:13px"></span></div>
 <div class="row"><button class="s" id="kcp">Copiar lista</button><button class="s" id="kbo">Borrar todo</button></div>
@@ -61,6 +73,7 @@ summary{cursor:pointer;font-weight:600;font-size:14.5px;color:var(--acc);padding
   <button id="kgo">Encender cámara</button>
 </details>
 <p class="ay"><b>Para el conteo de la planta (los barriles aún no tienen QR).</b> Usa el campo de arriba: escribes el número y aprietas Agregar, o Enter. Acepta 47, K47 o K047 — todos quedan como K047. Los repetidos los ignora, así que puedes recorrer la bodega sin miedo a contar dos veces.<br><br>
+<b>El estado se marca por zona, no por barril.</b> Antes de recorrer la cámara de frío toca <b>Lleno</b> una vez: todo lo que escribas después queda como lleno, hasta que lo cambies. Después tocas <b>Vacío</b> y sigues con esa zona. Un toque por zona.<br><br>
 <b>Cuando los stickers estén pegados.</b> Enciende la cámara y apunta al QR de cada barril: suena y vibra en cada uno. El sticker lleva el mismo número del barril — el 200 va en el K200.<br><br>
 <b>Al terminar.</b> "Copiar lista" y la pegas donde la necesites. La lista queda guardada en este teléfono aunque cierres la página, pero si borras los datos del navegador se pierde: cópiala el mismo día.<br><br>
 Esta página no manda nada a ninguna parte. Todo lo que escaneas se queda en tu teléfono.</p>
@@ -86,12 +99,19 @@ function nm(t){var m=String(t).toUpperCase().match(/K\s?-?\s?(\d{1,4})/)||String
   var n=parseInt(m[1],10);
   if(!(n>=1&&n<=MAXB)) return {err:n};
   return 'K'+('000'+n).slice(-3)}
+/* Cada entrada es "K047" o "K047 LLENO". El codigo es lo unico que identifica al
+   barril, asi que el duplicado se detecta por el codigo, no por la linea entera. */
+function cod(x){return String(x).split(' ')[0]}
+function est(x){var p=String(x).split(' ');return p.length>1?p[1]:''}
+var modo='';
 function pt(){
   $('kc').textContent=v.length+(v.length===1?' barril':' barriles');
   $('kch').innerHTML='';
   if(!v.length){var s=document.createElement('span');s.style.cssText='color:var(--dim);font-size:14px';s.textContent='Todavía no agregas ninguno.';$('kch').appendChild(s);}
   else v.forEach(function(c){
-    var sp=document.createElement('span');sp.className='chip';sp.appendChild(document.createTextNode(c));
+    var sp=document.createElement('span');sp.className='chip';
+    sp.appendChild(document.createTextNode(cod(c)));
+    if(est(c)){var i=document.createElement('i');i.textContent=est(c);sp.appendChild(i)}
     var b=document.createElement('b');b.textContent='×';b.onclick=function(){v=v.filter(function(x){return x!==c});sv();pt()};
     sp.appendChild(b);$('kch').appendChild(sp);});
   $('ks').value=v.join('\n');
@@ -99,12 +119,30 @@ function pt(){
 function add(t){var c=nm(t),e=$('ke');
   if(!c){e.textContent='No entendí ese número';return false}
   if(typeof c!=='string'){e.textContent='K'+c.err+' no existe: el parque llega hasta K'+MAXB;return false}
-  if(v.indexOf(c)>=0){e.textContent=c+' ya estaba en la lista';return false}
-  v.push(c);sv();pt();$('ku').textContent='último: '+c;e.textContent=c+' agregado ('+v.length+')';
+  var ya=null;
+  for(var i=0;i<v.length;i++){if(cod(v[i])===c){ya=v[i];break}}
+  if(ya){e.textContent=c+' ya estaba'+(est(ya)?' ('+est(ya).toLowerCase()+')':'');return false}
+  var ent=modo?c+' '+modo:c;
+  v.push(ent);sv();pt();$('ku').textContent='último: '+c;
+  e.textContent=c+(modo?' '+modo.toLowerCase():'')+' agregado ('+v.length+')';
   try{navigator.vibrate&&navigator.vibrate(60)}catch(x){}
   try{var a=new (window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator(),n=a.createGain();o.connect(n);n.connect(a.destination);o.frequency.value=880;n.gain.value=.07;o.start();setTimeout(function(){o.stop();a.close()},110)}catch(x){}
   return true}
 $('kadd').onclick=function(){if(add($('kman').value))$('kman').value=''};
+/* El modo se pega: se elige una vez por zona de la bodega y se aplica a todo lo
+   que se escriba despues. Se guarda para que no se pierda al cerrar la pagina. */
+try{modo=localStorage.getItem(K+'_m')||''}catch(e){}
+Array.prototype.forEach.call(document.querySelectorAll('.md'),function(b){
+  if(b.getAttribute('data-m')===modo)b.classList.add('on');else b.classList.remove('on');
+  b.onclick=function(){
+    modo=b.getAttribute('data-m');
+    try{localStorage.setItem(K+'_m',modo)}catch(e){}
+    Array.prototype.forEach.call(document.querySelectorAll('.md'),function(o){o.classList.remove('on')});
+    b.classList.add('on');
+    $('ke').textContent=modo?('Marcando como '+modo.toLowerCase()+'. Lo que escribas ahora queda así.'):'Sin marcar estado.';
+    $('kman').focus();
+  };
+});
 $('kman').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();$('kadd').click()}});
 /* dos toques en vez de confirm(): un diálogo del navegador congela la página */
 var arm=0;
